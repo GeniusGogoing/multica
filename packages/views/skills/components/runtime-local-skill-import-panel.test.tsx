@@ -92,8 +92,17 @@ describe("RuntimeLocalSkillImportPanel", () => {
               source_path: "~/.claude/skills/review-helper",
               file_count: 2,
             },
+            {
+              key: "docs-helper",
+              name: "Docs Helper",
+              description: "Write docs",
+              provider: "claude",
+              source_path: "~/.claude/skills/docs-helper",
+              file_count: 1,
+            },
           ],
         }),
+
     });
     mockResolveRuntimeLocalSkillImport.mockResolvedValue({
       skill: {
@@ -147,4 +156,41 @@ describe("RuntimeLocalSkillImportPanel", () => {
       { timeout: 5000 },
     );
   });
+
+  it("imports all selected runtime skills", async () => {
+    renderPanel();
+
+    expect(
+      await screen.findByText("Docs Helper", {}, { timeout: 5000 }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Select all/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Import to Workspace/i }));
+
+    await waitFor(
+      () => {
+        expect(mockResolveRuntimeLocalSkillImport).toHaveBeenCalledTimes(2);
+      },
+      { timeout: 5000 },
+    );
+    expect(mockResolveRuntimeLocalSkillImport).toHaveBeenNthCalledWith(
+      1,
+      "runtime-1",
+      {
+        skill_key: "review-helper",
+        name: "Review Helper",
+        description: "Review pull requests",
+      },
+    );
+    expect(mockResolveRuntimeLocalSkillImport).toHaveBeenNthCalledWith(
+      2,
+      "runtime-1",
+      {
+        skill_key: "docs-helper",
+        name: "Docs Helper",
+        description: "Write docs",
+      },
+    );
+  });
+
 });

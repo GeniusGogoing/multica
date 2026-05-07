@@ -40,22 +40,39 @@ function runtimeLabel(runtime: AgentRuntime): string {
   return `${runtime.name} (${runtime.provider})`;
 }
 
+type SkillDraft = {
+  name: string;
+  description: string;
+};
+
+function defaultDraft(skill: RuntimeLocalSkillSummary): SkillDraft {
+  return {
+    name: skill.name,
+    description: skill.description ?? "",
+  };
+}
+
 // ---------------------------------------------------------------------------
+
 // Skill row with inline-expanded name/description editor when selected
 // ---------------------------------------------------------------------------
 
 function SkillItem({
   skill,
-  selected,
-  onSelect,
+  checked,
+  active,
+  onToggle,
+  onActivate,
   name,
   description,
   onNameChange,
   onDescriptionChange,
 }: {
   skill: RuntimeLocalSkillSummary;
-  selected: boolean;
-  onSelect: () => void;
+  checked: boolean;
+  active: boolean;
+  onToggle: () => void;
+  onActivate: () => void;
   name: string;
   description: string;
   onNameChange: (v: string) => void;
@@ -64,37 +81,55 @@ function SkillItem({
   return (
     <div
       className={`overflow-hidden rounded-lg border transition-colors ${
-        selected ? "border-primary bg-primary/5" : "hover:bg-accent/40"
+        active
+          ? "border-primary bg-primary/5"
+          : checked
+            ? "border-primary/40 bg-primary/5"
+            : "hover:bg-accent/40"
       }`}
     >
-      <button
-        type="button"
-        onClick={onSelect}
-        className="flex w-full items-start gap-3 px-4 py-3 text-left"
-      >
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted">
-          <FileText className="h-4 w-4 text-muted-foreground" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-medium">{skill.name}</span>
-            <Badge variant="secondary">{skill.provider}</Badge>
+      <div className="flex w-full items-start gap-3 px-4 py-3 text-left">
+        <label
+          className="mt-2 flex shrink-0 cursor-pointer items-center"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <input
+            type="checkbox"
+            checked={checked}
+            onChange={onToggle}
+            aria-label={`Select ${skill.name}`}
+            className="h-4 w-4 rounded border-muted-foreground/40 accent-primary"
+          />
+        </label>
+        <button
+          type="button"
+          onClick={onActivate}
+          className="flex min-w-0 flex-1 items-start gap-3 text-left"
+        >
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted">
+            <FileText className="h-4 w-4 text-muted-foreground" />
           </div>
-          {skill.description && (
-            <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-              {skill.description}
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className="truncate text-sm font-medium">{skill.name}</span>
+              <Badge variant="secondary">{skill.provider}</Badge>
+            </div>
+            {skill.description && (
+              <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                {skill.description}
+              </p>
+            )}
+            <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
+              {skill.source_path}
             </p>
-          )}
-          <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
-            {skill.source_path}
-          </p>
-        </div>
+          </div>
+        </button>
         <Badge variant="outline" className="shrink-0">
           {skill.file_count} file{skill.file_count === 1 ? "" : "s"}
         </Badge>
-      </button>
+      </div>
 
-      {selected && (
+      {active && checked && (
         <div className="space-y-2.5 border-t bg-card px-4 py-3">
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">
@@ -127,6 +162,7 @@ function SkillItem({
 
 // ---------------------------------------------------------------------------
 // Panel — three-section layout: sticky top / scrollable middle / sticky bottom
+
 //
 // Previously took an `active` prop to defer work inside a tabbed parent; the
 // parent now unmounts the panel when it's not the active method, so `active`
@@ -155,24 +191,30 @@ export function RuntimeLocalSkillImportPanel({
   );
 
   const [selectedRuntimeId, setSelectedRuntimeId] = useState<string>("");
-  const [selectedSkillKey, setSelectedSkillKey] = useState<string>("");
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
+  const [selectedSkillKeys, setSelectedSkillKeys] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [activeSkillKey, setActiveSkillKey] = useState<string>("");
+  const [drafts, setDrafts] = useState<Record<string, SkillDraft>>({});
   const [importing, setImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState<{
+    done: number;
+    total: number;
+  } | null>(null);
 
   // Default to the first local runtime once the list lands.
   useEffect(() => {
     setSelectedRuntimeId((prev) => prev || localRuntimes[0]?.id || "");
   }, [localRuntimes]);
 
-  // Switching runtimes: clear the stale skill selection immediately so the
-  // old highlight / inline editor don't flash during the next query's fetch
-  // window. The auto-seed effect below picks the new first-skill once the
-  // scan lands.
+  // Switching runtimes: clear stale selections immediately so old highlights
+  // don't flash during the next scan window. The auto-seed effect below picks
+  // the first discovered skill once the new runtime's inventory lands.
   useEffect(() => {
-    setSelectedSkillKey("");
-    setName("");
-    setDescription("");
+    setSelectedSkillKeys(new Set());
+    setActiveSkillKey("");
+    setDrafts({});
+    setImportProgress(null);
   }, [selectedRuntimeId]);
 
   const selectedRuntime = localRuntimes.find((r) => r.id === selectedRuntimeId);
@@ -186,39 +228,136 @@ export function RuntimeLocalSkillImportPanel({
     () => skillsQuery.data?.skills ?? [],
     [skillsQuery.data],
   );
-  const selectedSkill = runtimeSkills.find((s) => s.key === selectedSkillKey);
 
-  // After a scan, auto-select the first skill so the Import button has a
-  // valid target without requiring a click.
+  // After a scan, keep any still-valid selections and default to the first
+  // discovered skill so single-import remains one-click while allowing users
+  // to expand the selection for batch import.
   useEffect(() => {
-    if (runtimeSkills.length === 0) return;
-    if (runtimeSkills.some((s) => s.key === selectedSkillKey)) return;
-    const first = runtimeSkills[0]!;
-    setSelectedSkillKey(first.key);
-    setName(first.name);
-    setDescription(first.description ?? "");
-  }, [runtimeSkills, selectedSkillKey]);
+    if (runtimeSkills.length === 0) {
+      setSelectedSkillKeys(new Set());
+      setActiveSkillKey("");
+      setDrafts({});
+      return;
+    }
 
-  const handleRowSelect = (s: RuntimeLocalSkillSummary) => {
-    setSelectedSkillKey(s.key);
-    setName(s.name);
-    setDescription(s.description ?? "");
+    const availableKeys = new Set(runtimeSkills.map((s) => s.key));
+    const first = runtimeSkills[0]!;
+
+    setSelectedSkillKeys((prev) => {
+      const next = new Set([...prev].filter((key) => availableKeys.has(key)));
+      if (next.size === 0) next.add(first.key);
+      return next;
+    });
+    setActiveSkillKey((prev) => (availableKeys.has(prev) ? prev : first.key));
+    setDrafts((prev) => {
+      const next: Record<string, SkillDraft> = {};
+      for (const skill of runtimeSkills) {
+        next[skill.key] = prev[skill.key] ?? defaultDraft(skill);
+      }
+      return next;
+    });
+  }, [runtimeSkills]);
+
+  const selectedSkills = useMemo(
+    () => runtimeSkills.filter((s) => selectedSkillKeys.has(s.key)),
+    [runtimeSkills, selectedSkillKeys],
+  );
+  const selectedCount = selectedSkills.length;
+  const allSelected =
+    runtimeSkills.length > 0 && runtimeSkills.every((s) => selectedSkillKeys.has(s.key));
+
+  const updateDraft = (
+    skill: RuntimeLocalSkillSummary,
+    patch: Partial<SkillDraft>,
+  ) => {
+    setDrafts((prev) => ({
+      ...prev,
+      [skill.key]: {
+        ...(prev[skill.key] ?? defaultDraft(skill)),
+        ...patch,
+      },
+    }));
+  };
+
+  const handleRowActivate = (skill: RuntimeLocalSkillSummary) => {
+    setActiveSkillKey(skill.key);
+    if (!selectedSkillKeys.has(skill.key)) {
+      setSelectedSkillKeys((prev) => new Set(prev).add(skill.key));
+    }
+    if (!drafts[skill.key]) {
+      updateDraft(skill, {});
+    }
+  };
+
+  const handleToggleSkill = (skill: RuntimeLocalSkillSummary) => {
+    const next = new Set(selectedSkillKeys);
+    if (next.has(skill.key)) {
+      next.delete(skill.key);
+      if (activeSkillKey === skill.key) {
+        const replacement = runtimeSkills.find((s) => next.has(s.key));
+        setActiveSkillKey(replacement?.key ?? "");
+      }
+    } else {
+      next.add(skill.key);
+      setActiveSkillKey(skill.key);
+      if (!drafts[skill.key]) {
+        updateDraft(skill, {});
+      }
+    }
+    setSelectedSkillKeys(next);
+  };
+
+  const handleSelectAll = () => {
+    setSelectedSkillKeys(new Set(runtimeSkills.map((s) => s.key)));
+    setActiveSkillKey((prev) => prev || runtimeSkills[0]?.key || "");
+  };
+
+  const handleClearSelection = () => {
+    setSelectedSkillKeys(new Set());
+    setActiveSkillKey("");
   };
 
   const handleImport = async () => {
-    if (!selectedRuntimeId || !selectedSkill) return;
+    if (!selectedRuntimeId || selectedSkills.length === 0) return;
+    const targets = selectedSkills.map((skill) => ({
+      skill,
+      draft: drafts[skill.key] ?? defaultDraft(skill),
+    }));
     setImporting(true);
+    setImportProgress({ done: 0, total: targets.length });
+
+    const imported: Skill[] = [];
+    const failedKeys = new Set<string>();
+    const failures: string[] = [];
+
     try {
-      const result = await resolveRuntimeLocalSkillImport(selectedRuntimeId, {
-        skill_key: selectedSkill.key,
-        name: name.trim() || undefined,
-        description: description.trim() || undefined,
-      });
-      // Seed the detail cache so navigation lands with data pre-populated.
-      qc.setQueryData(
-        skillDetailOptions(wsId, result.skill.id).queryKey,
-        result.skill,
-      );
+      for (const { skill, draft } of targets) {
+        try {
+          const result = await resolveRuntimeLocalSkillImport(selectedRuntimeId, {
+            skill_key: skill.key,
+            name: draft.name.trim() || undefined,
+            description: draft.description.trim() || undefined,
+          });
+          imported.push(result.skill);
+          qc.setQueryData(
+            skillDetailOptions(wsId, result.skill.id).queryKey,
+            result.skill,
+          );
+        } catch (error) {
+          failedKeys.add(skill.key);
+          failures.push(
+            `${skill.name}: ${
+              error instanceof Error ? error.message : "Failed to import skill"
+            }`,
+          );
+        } finally {
+          setImportProgress({
+            done: imported.length + failures.length,
+            total: targets.length,
+          });
+        }
+      }
+
       await Promise.all([
         qc.invalidateQueries({
           queryKey: runtimeLocalSkillsKeys.forRuntime(selectedRuntimeId),
@@ -226,25 +365,38 @@ export function RuntimeLocalSkillImportPanel({
         qc.invalidateQueries({ queryKey: workspaceKeys.skills(wsId) }),
         qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) }),
       ]);
-      toast.success("Skill imported");
-      onImported?.(result.skill);
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Failed to import skill",
-      );
+
+      if (failures.length === 0) {
+        toast.success(
+          `${imported.length} skill${imported.length === 1 ? "" : "s"} imported`,
+        );
+        if (imported[0]) onImported?.(imported[0]);
+      } else {
+        setSelectedSkillKeys(failedKeys);
+        setActiveSkillKey(failedKeys.values().next().value ?? "");
+        toast.error(
+          `${imported.length} imported, ${failures.length} failed. ${failures[0]}`,
+        );
+      }
     } finally {
       setImporting(false);
+      setImportProgress(null);
     }
   };
 
+  const hasInvalidSelection = selectedSkills.some((skill) => {
+    const draft = drafts[skill.key] ?? defaultDraft(skill);
+    return !draft.name.trim();
+  });
   const canImport =
     !!selectedRuntime &&
     selectedRuntime.status === "online" &&
-    !!selectedSkill &&
-    !!name.trim() &&
+    selectedCount > 0 &&
+    !hasInvalidSelection &&
     !importing;
 
   // --- Scroll fade for the middle region ---
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const fadeStyle = useScrollFade(scrollRef);
 
@@ -321,20 +473,53 @@ export function RuntimeLocalSkillImportPanel({
     }
     return (
       <div className="space-y-2">
-        {runtimeSkills.map((s) => (
-          <SkillItem
-            key={s.key}
-            skill={s}
-            selected={selectedSkillKey === s.key}
-            onSelect={() => handleRowSelect(s)}
-            name={selectedSkillKey === s.key ? name : ""}
-            description={selectedSkillKey === s.key ? description : ""}
-            onNameChange={setName}
-            onDescriptionChange={setDescription}
-          />
-        ))}
+        <div className="flex items-center justify-between gap-3 rounded-md border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+          <span>
+            {selectedCount} of {runtimeSkills.length} selected
+          </span>
+          <div className="flex items-center gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              onClick={handleSelectAll}
+              disabled={allSelected || importing}
+            >
+              Select all
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              onClick={handleClearSelection}
+              disabled={selectedCount === 0 || importing}
+            >
+              Clear
+            </Button>
+          </div>
+        </div>
+        {runtimeSkills.map((s) => {
+          const draft = drafts[s.key] ?? defaultDraft(s);
+          return (
+            <SkillItem
+              key={s.key}
+              skill={s}
+              checked={selectedSkillKeys.has(s.key)}
+              active={activeSkillKey === s.key}
+              onToggle={() => handleToggleSkill(s)}
+              onActivate={() => handleRowActivate(s)}
+              name={draft.name}
+              description={draft.description}
+              onNameChange={(value) => updateDraft(s, { name: value })}
+              onDescriptionChange={(value) =>
+                updateDraft(s, { description: value })
+              }
+            />
+          );
+        })}
       </div>
     );
+
   })();
 
   return (
@@ -405,16 +590,21 @@ export function RuntimeLocalSkillImportPanel({
       {/* Sticky bottom: Import button + context */}
       <div className="flex shrink-0 items-center gap-3 border-t bg-muted/30 px-5 py-3">
         <div className="min-w-0 flex-1 text-xs text-muted-foreground">
-          {selectedSkill ? (
+          {importProgress ? (
+            <>
+              Importing {importProgress.done} of {importProgress.total} selected
+              skills…
+            </>
+          ) : selectedCount > 0 ? (
             <>
               Ready to import{" "}
               <span className="font-medium text-foreground">
-                {name.trim() || selectedSkill.name}
+                {selectedCount} selected skill{selectedCount === 1 ? "" : "s"}
               </span>{" "}
               into this workspace.
             </>
           ) : (
-            "Select a skill to continue."
+            "Select one or more skills to continue."
           )}
         </div>
         <Button
@@ -437,5 +627,6 @@ export function RuntimeLocalSkillImportPanel({
         </Button>
       </div>
     </div>
+
   );
 }
