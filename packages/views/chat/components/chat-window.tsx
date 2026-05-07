@@ -3,7 +3,9 @@
 import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "motion/react";
-import { Minus, Maximize2, Minimize2, ChevronDown, Plus, Check } from "lucide-react";
+import { toast } from "sonner";
+import { Archive, Minus, Maximize2, Minimize2, ChevronDown, Plus, Check } from "lucide-react";
+
 import { Button } from "@multica/ui/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@multica/ui/components/ui/tooltip";
 import {
@@ -32,8 +34,13 @@ import {
   pendingChatTasksOptions,
   chatKeys,
 } from "@multica/core/chat/queries";
-import { useCreateChatSession, useMarkChatSessionRead } from "@multica/core/chat/mutations";
+import {
+  useArchiveChatSession,
+  useCreateChatSession,
+  useMarkChatSessionRead,
+} from "@multica/core/chat/mutations";
 import { useChatStore } from "@multica/core/chat";
+
 import { ChatMessageList, ChatMessageSkeleton } from "./chat-message-list";
 import { ChatInput } from "./chat-input";
 import {
@@ -91,9 +98,11 @@ export function ChatWindow() {
 
   const qc = useQueryClient();
   const createSession = useCreateChatSession();
+  const archiveSession = useArchiveChatSession();
   const markRead = useMarkChatSessionRead();
 
   const currentMember = members.find((m) => m.user_id === user?.id);
+
   const memberRole = currentMember?.role;
   const availableAgents = agents.filter(
     (a) => !a.archived_at && canAssignAgent(a, user?.id, memberRole),
@@ -327,11 +336,28 @@ export function ChatWindow() {
     [activeAgent, setSelectedAgentId, setActiveSession],
   );
 
+  const handleArchiveSession = useCallback(
+    (session: ChatSession) => {
+      const wasActive = session.id === activeSessionId;
+      uiLogger.info("archiveSession", { sessionId: session.id, wasActive });
+      if (wasActive) setActiveSession(null);
+      archiveSession.mutate(session.id, {
+        onSuccess: () => toast.success("Chat archived"),
+        onError: () => {
+          if (wasActive) setActiveSession(session.id);
+          toast.error("Failed to archive chat");
+        },
+      });
+    },
+    [activeSessionId, archiveSession, setActiveSession],
+  );
+
   const handleMinimize = useCallback(() => {
     uiLogger.info("minimize (close)", {
       activeSessionId,
       pendingTaskId,
     });
+
     setOpen(false);
   }, [activeSessionId, pendingTaskId, setOpen]);
 
@@ -400,8 +426,10 @@ export function ChatWindow() {
             agents={agents}
             activeSessionId={activeSessionId}
             onSelectSession={handleSelectSession}
+            onArchiveSession={handleArchiveSession}
           />
         </div>
+
         <div className="flex items-center gap-0.5 shrink-0">
           <Tooltip>
             <TooltipTrigger
@@ -611,13 +639,16 @@ function SessionDropdown({
   agents,
   activeSessionId,
   onSelectSession,
+  onArchiveSession,
 }: {
   sessions: ChatSession[];
   agents: Agent[];
   activeSessionId: string | null;
   onSelectSession: (session: ChatSession) => void;
+  onArchiveSession: (session: ChatSession) => void;
 }) {
   const wsId = useWorkspaceId();
+
   const agentById = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
   const activeSession = sessions.find((s) => s.id === activeSessionId);
   const title = activeSession?.title?.trim() || "New chat";
@@ -687,7 +718,7 @@ function SessionDropdown({
               <DropdownMenuItem
                 key={session.id}
                 onClick={() => onSelectSession(session)}
-                className="flex min-w-0 items-center gap-2"
+                className="group flex min-w-0 items-center gap-2"
               >
                 {agent ? (
                   <ActorAvatar
@@ -723,9 +754,24 @@ function SessionDropdown({
                   />
                 ) : null}
                 {isCurrent && <Check className="size-3.5 text-muted-foreground shrink-0" />}
+                <span
+                  role="button"
+                  tabIndex={-1}
+                  title="Archive chat"
+                  aria-label="Archive chat"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onArchiveSession(session);
+                  }}
+                  className="cursor-pointer rounded p-0.5 text-muted-foreground opacity-70 hover:bg-accent hover:text-foreground hover:opacity-100 group-hover:opacity-100"
+                >
+                  <Archive className="h-3.5 w-3.5" />
+                </span>
               </DropdownMenuItem>
             );
           })
+
         )}
       </DropdownMenuContent>
     </DropdownMenu>
