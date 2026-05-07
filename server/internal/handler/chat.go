@@ -447,6 +447,8 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 
 	// Verify ownership: for chat tasks, check workspace + creator;
 	// for issue tasks, verify the issue belongs to the current workspace.
+	// For orphan tasks (quick-create with no issue/chat yet), verify the
+	// agent belongs to the current workspace.
 	if task.ChatSessionID.Valid {
 		cs, err := h.Queries.GetChatSessionInWorkspace(r.Context(), db.GetChatSessionInWorkspaceParams{
 			ID:          task.ChatSessionID,
@@ -467,8 +469,16 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		writeError(w, http.StatusNotFound, "task not found")
-		return
+		// Orphan task (e.g. quick-create before the issue exists).
+		// Verify the task's agent belongs to the caller's workspace.
+		_, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
+			ID:          task.AgentID,
+			WorkspaceID: parseUUID(workspaceID),
+		})
+		if err != nil {
+			writeError(w, http.StatusNotFound, "task not found")
+			return
+		}
 	}
 
 	cancelled, err := h.TaskService.CancelTask(r.Context(), taskUUID)
