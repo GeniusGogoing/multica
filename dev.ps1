@@ -101,6 +101,13 @@ $frontendPort = Get-Port "FRONTEND_PORT" 3000
 Write-Step "Clearing stale processes on ports $backendPort, $frontendPort..."
 Stop-OnPort $backendPort
 Stop-OnPort $frontendPort
+# Stop any existing daemon process
+$daemonPidFile = Join-Path $env:USERPROFILE ".multica\daemon.pid"
+if (Test-Path $daemonPidFile) {
+    $procId = [int](Get-Content $daemonPidFile)
+    try { Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue } catch {}
+    Write-Host "  Killed old daemon PID $procId" -ForegroundColor Yellow
+}
 
 # Dependencies
 if (-not (Test-Path (Join-Path $Root "node_modules"))) {
