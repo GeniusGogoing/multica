@@ -209,8 +209,7 @@ func TestPrepareWithProjectResources(t *testing.T) {
 		"## Project Context",
 		"Agent UX 2026",
 		"GitHub repo",
-		"https://github.com/multica-ai/multica",
-		"default branch: `main`",
+		"multica repo checkout https://github.com/multica-ai/multica --ref main",
 		".multica/project/resources.json",
 	} {
 		if !strings.Contains(s, want) {

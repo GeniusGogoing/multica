@@ -18,12 +18,19 @@ func formatProjectResource(r ProjectResourceForEnv) string {
 	case "github_repo":
 		var payload struct {
 			URL               string `json:"url"`
+			Branch            string `json:"branch,omitempty"`
 			DefaultBranchHint string `json:"default_branch_hint,omitempty"`
 		}
 		_ = json.Unmarshal(r.ResourceRef, &payload)
-		out := fmt.Sprintf("**GitHub repo**: %s", payload.URL)
-		if payload.DefaultBranchHint != "" {
-			out += fmt.Sprintf(" (default branch: `%s`)", payload.DefaultBranchHint)
+		branch := payload.Branch
+		if branch == "" {
+			branch = payload.DefaultBranchHint
+		}
+		var out string
+		if branch != "" {
+			out = fmt.Sprintf("**GitHub repo**: `multica repo checkout %s --ref %s`", payload.URL, branch)
+		} else {
+			out = fmt.Sprintf("**GitHub repo**: `multica repo checkout %s`", payload.URL)
 		}
 		if label != "" {
 			out += " — " + label
@@ -160,11 +167,15 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	if len(ctx.Repos) > 0 {
 		b.WriteString("## Repositories\n\n")
 		b.WriteString("The following code repositories are available in this workspace.\n")
-		b.WriteString("Use `multica repo checkout <url>` to check out a repository into your working directory. Add `--ref <branch-or-sha>` when you need an exact branch, tag, or commit.\n\n")
+		b.WriteString("Use the commands below to check out a repository into your working directory.\n\n")
 		for _, repo := range ctx.Repos {
-			fmt.Fprintf(&b, "- %s\n", repo.URL)
+			if repo.Branch != "" {
+				fmt.Fprintf(&b, "- `multica repo checkout %s --ref %s`\n", repo.URL, repo.Branch)
+			} else {
+				fmt.Fprintf(&b, "- `multica repo checkout %s`\n", repo.URL)
+			}
 		}
-		b.WriteString("\nThe checkout command creates a git worktree with a dedicated branch. You can check out one or more repos as needed, and can pass `--ref` for review/QA on a non-default branch or commit.\n\n")
+		b.WriteString("\n")
 	}
 
 	// Inject project-scoped context (resources attached to the issue's project).
@@ -181,7 +192,7 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 				fmt.Fprintf(&b, "- %s\n", formatProjectResource(r))
 			}
 			b.WriteString("\nResources are pointers — open them only when relevant to the task. ")
-			b.WriteString("For `github_repo` resources, use `multica repo checkout <url>` to fetch the code. Add `--ref <branch-or-sha>` when a task or handoff names an exact revision.\n\n")
+			b.WriteString("For `github_repo` resources, run the exact checkout command shown above to fetch the code.\n\n")
 		} else {
 			b.WriteString("This project has no resources attached yet.\n\n")
 		}
