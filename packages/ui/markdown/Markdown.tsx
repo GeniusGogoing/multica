@@ -407,7 +407,7 @@ export function Markdown({
     <div className={cn('markdown-content break-words', className)}>
       <ReactMarkdown
         remarkPlugins={[remarkMath, remarkBreaks, [remarkGfm, { singleTilde: false }]]}
-        rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema], rehypeKatex]}
+        rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema], [rehypeKatex, { strict: 'ignore' }]]}
         urlTransform={urlTransform}
         components={components}
       >
