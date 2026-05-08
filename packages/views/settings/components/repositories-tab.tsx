@@ -55,8 +55,8 @@ export function RepositoriesTab() {
     setRepos(repos.filter((_, i) => i !== index));
   };
 
-  const handleRepoChange = (index: number, value: string) => {
-    setRepos(repos.map((r, i) => (i === index ? { ...r, url: value } : r)));
+  const handleRepoChange = (index: number, field: "url" | "branch", value: string) => {
+    setRepos(repos.map((r, i) => (i === index ? { ...r, [field]: value } : r)));
   };
 
   if (!workspace) return null;
@@ -75,12 +75,20 @@ export function RepositoriesTab() {
             {repos.map((repo, index) => (
               <div key={index} className="flex items-start gap-2">
                 <Input
-                  type="url"
+                  type="text"
                   value={repo.url}
-                  onChange={(e) => handleRepoChange(index, e.target.value)}
+                  onChange={(e) => handleRepoChange(index, "url", e.target.value)}
                   disabled={!canManageWorkspace}
-                  placeholder="https://git.example.com/org/repo.git"
+                  placeholder="git@github.com:org/repo.git"
                   className="flex-1 min-w-0 text-sm"
+                />
+                <Input
+                  type="text"
+                  value={repo.branch ?? ""}
+                  onChange={(e) => handleRepoChange(index, "branch", e.target.value)}
+                  disabled={!canManageWorkspace}
+                  placeholder="branch (optional)"
+                  className="w-36 text-sm"
                 />
                 {canManageWorkspace && (
                   <Button

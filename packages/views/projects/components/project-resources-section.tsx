@@ -50,11 +50,11 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
       .map((r) => (r.resource_ref as GithubRepoResourceRef).url),
   );
 
-  const handleAttach = async (url: string) => {
+  const handleAttach = async (url: string, branch?: string) => {
     try {
       await createResource.mutateAsync({
         resource_type: "github_repo",
-        resource_ref: { url },
+        resource_ref: { url, ...(branch ? { branch } : {}) },
       });
       toast.success("Repository attached");
     } catch (err) {
@@ -129,7 +129,7 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
                         aria-disabled={isDisabled}
                         onClick={async () => {
                           if (isDisabled) return;
-                          await handleAttach(repo.url);
+                          await handleAttach(repo.url, repo.branch);
                           setAddOpen(false);
                         }}
                         className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-left hover:bg-accent transition-colors aria-disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:hover:bg-transparent"
@@ -154,8 +154,8 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
                 </div>
               )}
               <CustomRepoForm
-                onSubmit={async (url) => {
-                  await handleAttach(url);
+                onSubmit={async (url, branch) => {
+                  await handleAttach(url, branch);
                   setAddOpen(false);
                 }}
               />
@@ -225,9 +225,10 @@ function ResourceRow({
 function CustomRepoForm({
   onSubmit,
 }: {
-  onSubmit: (url: string) => Promise<void> | void;
+  onSubmit: (url: string, branch?: string) => Promise<void> | void;
 }) {
   const [url, setUrl] = useState("");
+  const [branch, setBranch] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const handle = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -235,30 +236,40 @@ function CustomRepoForm({
     if (!trimmed) return;
     setSubmitting(true);
     try {
-      await onSubmit(trimmed);
+      await onSubmit(trimmed, branch.trim() || undefined);
       setUrl("");
+      setBranch("");
     } finally {
       setSubmitting(false);
     }
   };
   return (
-    <form onSubmit={handle} className="flex items-center gap-1.5 pt-1 border-t">
+    <form onSubmit={handle} className="space-y-1.5 pt-1 border-t">
+      <div className="flex items-center gap-1.5">
+        <input
+          type="text"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          placeholder="git@github.com:owner/repo.git"
+          className="flex-1 bg-transparent text-xs px-2 py-1 outline-none placeholder:text-muted-foreground"
+        />
+        <Button
+          type="submit"
+          size="sm"
+          variant="ghost"
+          className="h-6 px-2 text-xs"
+          disabled={!url.trim() || submitting}
+        >
+          Add
+        </Button>
+      </div>
       <input
-        type="url"
-        value={url}
-        onChange={(e) => setUrl(e.target.value)}
-        placeholder="https://github.com/owner/repo"
-        className="flex-1 bg-transparent text-xs px-2 py-1 outline-none placeholder:text-muted-foreground"
+        type="text"
+        value={branch}
+        onChange={(e) => setBranch(e.target.value)}
+        placeholder="branch (optional)"
+        className="w-full bg-transparent text-xs px-2 py-1 outline-none placeholder:text-muted-foreground"
       />
-      <Button
-        type="submit"
-        size="sm"
-        variant="ghost"
-        className="h-6 px-2 text-xs"
-        disabled={!url.trim() || submitting}
-      >
-        Add
-      </Button>
     </form>
   );
 }

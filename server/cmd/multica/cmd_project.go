@@ -502,7 +502,9 @@ func runProjectResourceAdd(cmd *cobra.Command, args []string) error {
 			}
 			ref := map[string]any{"url": urlVal}
 			if hint, _ := cmd.Flags().GetString("default-branch-hint"); hint != "" {
-				ref["default_branch_hint"] = strings.TrimSpace(hint)
+				ref["branch"] = strings.TrimSpace(hint)
+			} else if branch, _ := cmd.Flags().GetString("branch"); branch != "" {
+				ref["branch"] = strings.TrimSpace(branch)
 			}
 			body["resource_ref"] = ref
 		default:

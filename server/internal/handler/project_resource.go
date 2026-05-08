@@ -71,23 +71,86 @@ func validateAndNormalizeResourceRef(resourceType string, ref json.RawMessage) (
 }
 
 type githubRepoRef struct {
-	URL                string `json:"url"`
-	DefaultBranchHint  string `json:"default_branch_hint,omitempty"`
+	URL    string `json:"url"`
+	Branch string `json:"branch,omitempty"`
+}
+
+// isValidGitURL checks if s is a valid git remote URL. Accepts:
+//   - HTTPS: https://github.com/org/repo.git
+//   - SSH scp-style: git@github.com:org/repo.git
+//   - SSH URL-style: ssh://git@github.com/org/repo.git
+func isValidGitURL(s string) bool {
+	// HTTPS or SSH URL-style (has a scheme).
+	if u, err := url.Parse(s); err == nil && u.Host != "" {
+		switch u.Scheme {
+		case "http", "https", "ssh":
+			return true
+		}
+	}
+	// SSH scp-style: [user@]host:path (must contain ':' after host, path non-empty).
+	if strings.Contains(s, ":") {
+		host := s
+		if at := strings.Index(s, "@"); at >= 0 {
+			host = s[at+1:]
+		}
+		colonIdx := strings.Index(host, ":")
+		if colonIdx > 0 && colonIdx < len(host)-1 {
+			// host part must not contain '/' before ':' (that would be a path, not a host)
+			if !strings.Contains(host[:colonIdx], "/") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// validateGitBranch checks that s is a valid git ref name (simplified).
+func validateGitBranch(s string) error {
+	if len(s) > 255 {
+		return errors.New("branch name exceeds 255 characters")
+	}
+	if strings.HasPrefix(s, "-") {
+		return errors.New("branch name must not start with '-'")
+	}
+	for _, bad := range []string{"..", "~", "^", ":", "\\", " ", "\t", "\n"} {
+		if strings.Contains(s, bad) {
+			return fmt.Errorf("branch name contains invalid character %q", bad)
+		}
+	}
+	return nil
 }
 
 func validateGithubRepoRef(ref json.RawMessage) (json.RawMessage, error) {
-	var payload githubRepoRef
-	if err := json.Unmarshal(ref, &payload); err != nil {
+	// Support legacy "default_branch_hint" field by unmarshaling into a flexible struct.
+	var raw struct {
+		URL               string `json:"url"`
+		Branch            string `json:"branch"`
+		DefaultBranchHint string `json:"default_branch_hint"`
+	}
+	if err := json.Unmarshal(ref, &raw); err != nil {
 		return nil, fmt.Errorf("invalid github_repo payload: %w", err)
 	}
-	payload.URL = strings.TrimSpace(payload.URL)
+
+	payload := githubRepoRef{
+		URL:    strings.TrimSpace(raw.URL),
+		Branch: strings.TrimSpace(raw.Branch),
+	}
+	// Migrate legacy field.
+	if payload.Branch == "" && raw.DefaultBranchHint != "" {
+		payload.Branch = strings.TrimSpace(raw.DefaultBranchHint)
+	}
+
 	if payload.URL == "" {
 		return nil, errors.New("github_repo: url is required")
 	}
-	if u, err := url.Parse(payload.URL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return nil, errors.New("github_repo: url must be a valid http(s) URL")
+	if !isValidGitURL(payload.URL) {
+		return nil, errors.New("github_repo: url must be a valid git URL (https or ssh)")
 	}
-	payload.DefaultBranchHint = strings.TrimSpace(payload.DefaultBranchHint)
+	if payload.Branch != "" {
+		if err := validateGitBranch(payload.Branch); err != nil {
+			return nil, fmt.Errorf("github_repo: %w", err)
+		}
+	}
 	out, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err

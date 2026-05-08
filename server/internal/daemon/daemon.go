@@ -37,6 +37,7 @@ type workspaceState struct {
 	runtimeIDs      []string
 	reposVersion    string // stored for future use: skip refresh when version unchanged
 	allowedRepoURLs map[string]struct{}
+	repoBranches    map[string]string // URL -> configured branch (empty if not set)
 	taskRepoURLs    map[string]struct{}
 	settings        json.RawMessage // workspace settings (JSONB)
 	lastRepoSyncErr string
@@ -347,6 +348,7 @@ func newWorkspaceState(workspaceID string, runtimeIDs []string, reposVersion str
 		runtimeIDs:      runtimeIDs,
 		reposVersion:    reposVersion,
 		allowedRepoURLs: repoAllowlist(repos),
+		repoBranches:    repoBranchMap(repos),
 		settings:        settings,
 	}
 }
@@ -360,6 +362,29 @@ func repoAllowlist(repos []RepoData) map[string]struct{} {
 		allowed[repo.URL] = struct{}{}
 	}
 	return allowed
+}
+
+func repoBranchMap(repos []RepoData) map[string]string {
+	branches := make(map[string]string, len(repos))
+	for _, repo := range repos {
+		if repo.URL == "" {
+			continue
+		}
+		branches[repo.URL] = repo.Branch
+	}
+	return branches
+}
+
+// workspaceRepoBranch returns the configured branch for a repo URL in a workspace.
+// Returns "" if no branch is configured (daemon uses auto-detect in that case).
+func (d *Daemon) workspaceRepoBranch(workspaceID, repoURL string) string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	ws, ok := d.workspaces[workspaceID]
+	if !ok {
+		return ""
+	}
+	return ws.repoBranches[repoURL]
 }
 
 func (d *Daemon) setWorkspaceRepoSyncError(workspaceID, syncErr string) {
@@ -442,6 +467,13 @@ func (d *Daemon) registerTaskRepos(workspaceID string, repos []RepoData) {
 		url := strings.TrimSpace(repo.URL)
 		if url == "" {
 			continue
+		}
+		// Store branch for task repos so resolveCheckoutRef can find it.
+		if repo.Branch != "" {
+			if ws.repoBranches == nil {
+				ws.repoBranches = make(map[string]string)
+			}
+			ws.repoBranches[url] = repo.Branch
 		}
 		// Don't re-sync if the URL is already tracked (workspace or task-scoped)
 		// AND the cache already has it.
@@ -1878,7 +1910,7 @@ func mergeUsage(a, b map[string]agent.TokenUsage) map[string]agent.TokenUsage {
 func repoDataToInfo(repos []RepoData) []repocache.RepoInfo {
 	info := make([]repocache.RepoInfo, len(repos))
 	for i, r := range repos {
-		info[i] = repocache.RepoInfo{URL: r.URL}
+		info[i] = repocache.RepoInfo{URL: r.URL, Branch: r.Branch}
 	}
 	return info
 }
@@ -1889,7 +1921,7 @@ func convertReposForEnv(repos []RepoData) []execenv.RepoContextForEnv {
 	}
 	result := make([]execenv.RepoContextForEnv, len(repos))
 	for i, r := range repos {
-		result[i] = execenv.RepoContextForEnv{URL: r.URL}
+		result[i] = execenv.RepoContextForEnv{URL: r.URL, Branch: r.Branch}
 	}
 	return result
 }

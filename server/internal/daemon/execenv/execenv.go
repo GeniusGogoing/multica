@@ -14,7 +14,8 @@ import (
 
 // RepoContextForEnv describes a workspace repo available for checkout.
 type RepoContextForEnv struct {
-	URL string // remote URL
+	URL    string // remote URL
+	Branch string // optional branch override (empty = auto-detect default)
 }
 
 // ProjectResourceForEnv describes a single resource attached to the issue's

@@ -53,6 +53,17 @@ type repoCheckoutRequest struct {
 	TaskID      string `json:"task_id"`
 }
 
+// resolveCheckoutRef returns the ref to use for worktree creation. If the
+// request specifies a ref (agent explicitly requested a branch), use that.
+// Otherwise fall back to the workspace-configured branch for this repo.
+// Returns "" when neither is set, which makes CreateWorktree auto-detect.
+func (d *Daemon) resolveCheckoutRef(workspaceID, repoURL, requestRef string) string {
+	if requestRef != "" {
+		return requestRef
+	}
+	return d.workspaceRepoBranch(workspaceID, repoURL)
+}
+
 // healthHandler returns the /health HTTP handler. Extracted from serveHealth
 // so tests can exercise it without spinning up a listener.
 func (d *Daemon) healthHandler(startedAt time.Time) http.HandlerFunc {
@@ -162,7 +173,7 @@ func (d *Daemon) serveHealth(ctx context.Context, ln net.Listener, startedAt tim
 			WorkspaceID:         req.WorkspaceID,
 			RepoURL:             req.URL,
 			WorkDir:             req.WorkDir,
-			Ref:                 req.Ref,
+			Ref:                 d.resolveCheckoutRef(req.WorkspaceID, req.URL, req.Ref),
 			AgentName:           req.AgentName,
 			TaskID:              req.TaskID,
 			CoAuthoredByEnabled: d.workspaceCoAuthoredByEnabled(req.WorkspaceID),
